@@ -1,0 +1,277 @@
+<script setup lang="ts">
+/**
+ * Component that orchestrates export, save, and upload actions for the current scale.
+ */
+import { API_URL, APP_TITLE } from '@/constants'
+import { exportFile, type ExporterKey } from '@/exporters'
+import type { ExporterParams } from '@/exporters/base'
+import { useScaleStore } from '@/stores/scale'
+import { useStateStore } from '@/stores/state'
+import { useSessionIdStore } from '@/stores/session-id'
+import { useScaleUpload } from '@/upload-scale'
+import { computed, defineAsyncComponent, ref } from 'vue'
+import { sanitizeFilename } from '@/utils'
+
+const ScalaExportModal = defineAsyncComponent(
+  () => import('@/components/modals/export/ScalaExport.vue')
+)
+
+const KorgExportModal = defineAsyncComponent(
+  () => import('@/components/modals/export/KorgExport.vue')
+)
+const MtsSysexExportModal = defineAsyncComponent(
+  () => import('@/components/modals/export/MtsSysexExport.vue')
+)
+const ReaperExportModal = defineAsyncComponent(
+  () => import('@/components/modals/export/ReaperExport.vue')
+)
+const KontaktExportModal = defineAsyncComponent(
+  () => import('@/components/modals/export/KontaktExport.vue')
+)
+
+const sessionId = useSessionIdStore()
+const state = useStateStore()
+const scale = useScaleStore()
+
+const exportTextClipboard = ref(
+  API_URL ? "Copy this scale's unique URL to clipboard" : '[URL sharing disabled]'
+)
+const showScalaExportModal = ref(false)
+const showKorgExportModal = ref(false)
+const showMtsSysexExportModal = ref(false)
+const showReaperExportModal = ref(false)
+const showKontaktExportModal = ref(false)
+
+const uploadedScaleUrl = computed(() => `${window.location.origin}/scale/${sessionId.uploadedId}`)
+
+const { uploadBody, uploadScale } = useScaleUpload()
+
+function downloadDebugDump() {
+  const link = document.createElement('a')
+  link.download = sanitizeFilename(scale.scale.title) + '.json'
+  link.href = 'data:application/json,' + encodeURIComponent(uploadBody.value)
+  // Open save dialog
+  link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+}
+
+function copyToClipboard() {
+  if (API_URL) {
+    uploadScale().then((url) => {
+      window.navigator.clipboard.writeText(url)
+      exportTextClipboard.value = '[Copied URL to clipboard]'
+      window.setTimeout(() => {
+        exportTextClipboard.value = "Copy this scale's unique URL to clipboard"
+      }, 5000)
+    })
+  } else {
+    exportTextClipboard.value = 'You must have sw-server running for this to work!'
+    window.setTimeout(() => {
+      exportTextClipboard.value = '[URL sharing disabled]'
+    }, 5000)
+  }
+}
+
+function doExport(exporter: ExporterKey) {
+  uploadScale().then((scaleUrl) => {
+    const params: ExporterParams = {
+      newline: state.newline,
+      scaleUrl,
+      filename: sanitizeFilename(scale.scale.title),
+      relativeIntervals: scale.relativeIntervals,
+      scale: scale.scale,
+      labels: scale.labels,
+      midiOctaveOffset: -1,
+      description: scale.scale.title,
+      sourceText: scale.sourceText,
+      appTitle: APP_TITLE,
+      date: new Date()
+    }
+
+    if (exporter === 'xendevs') {
+      const { rawIntervals, unisonFrequency } = scale.computeRawScale()
+      params.rawIntervals = rawIntervals
+      params.unisonFrequency = unisonFrequency
+    }
+
+    exportFile(exporter, params)
+  })
+}
+</script>
+<template>
+  <Teleport to="body">
+    <ScalaExportModal
+      v-if="showScalaExportModal"
+      :show="showScalaExportModal"
+      @confirm="showScalaExportModal = false"
+      @cancel="showScalaExportModal = false"
+      :scaleUrl="uploadedScaleUrl"
+      :newline="state.newline"
+      :relativeIntervals="scale.relativeIntervals"
+      :midiOctaveOffset="-1"
+      :scale="scale.scale"
+      :labels="scale.labels"
+      :colors="scale.colors"
+    />
+
+    <KorgExportModal
+      v-if="showKorgExportModal"
+      :show="showKorgExportModal"
+      @confirm="showKorgExportModal = false"
+      @cancel="showKorgExportModal = false"
+      :newline="state.newline"
+      :relativeIntervals="scale.relativeIntervals"
+      :midiOctaveOffset="-1"
+      :scale="scale.scale"
+      :labels="scale.labels"
+    />
+
+    <MtsSysexExportModal
+      v-if="showMtsSysexExportModal"
+      :show="showMtsSysexExportModal"
+      @confirm="showMtsSysexExportModal = false"
+      @cancel="showMtsSysexExportModal = false"
+      :newline="state.newline"
+      :relativeIntervals="scale.relativeIntervals"
+      :midiOctaveOffset="-1"
+      :scale="scale.scale"
+      :labels="scale.labels"
+    />
+
+    <ReaperExportModal
+      v-if="showReaperExportModal"
+      :show="showReaperExportModal"
+      @confirm="showReaperExportModal = false"
+      @cancel="showReaperExportModal = false"
+      :newline="state.newline"
+      :relativeIntervals="scale.relativeIntervals"
+      :midiOctaveOffset="-1"
+      :scale="scale.scale"
+      :labels="scale.labels"
+    />
+
+    <KontaktExportModal
+      v-if="showKontaktExportModal"
+      :show="showKontaktExportModal"
+      @confirm="showKontaktExportModal = false"
+      @cancel="showKontaktExportModal = false"
+      :newline="state.newline"
+      :midiOctaveOffset="-1"
+      :scale="scale.scale"
+      :scaleUrl="uploadedScaleUrl"
+    />
+  </Teleport>
+  <h2>Export current settings</h2>
+  <a href="#" :class="{ btn: true, disabled: !API_URL }" @click.prevent="copyToClipboard">
+    <p><strong>Share scale</strong></p>
+    <p>{{ exportTextClipboard }}</p>
+  </a>
+  <a v-if="state.debug" href="#" class="btn debug" @click.prevent="downloadDebugDump"
+    ><p><strong>Debug dump (.json)</strong></p>
+    <p>Copy of the data sent to the server.</p></a
+  >
+  <a href="#" class="btn" @click.prevent="doExport('anamarkv1')">
+    <p><strong>AnaMark v1 tuning (.tun)</strong></p>
+    <p>Tuning file for various synths</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('anamarkv2')">
+    <p><strong>AnaMark v2 tuning (.tun)</strong></p>
+    <p>Tuning file for various synths</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="showScalaExportModal = true">
+    <p><strong>Scala scale (.scl)</strong></p>
+    <p>
+      Scale file for various synths.<br />If you use this file without an accompanying .kbm file,
+      most synths will assume your scale starts on C ≈ 262Hz
+    </p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('scalakbm')">
+    <p><strong>Scala keyboard mapping (.kbm)</strong></p>
+    <p>Maps an accompanying .scl file to start on a specific MIDI note and frequency</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('ableton')">
+    <p><strong>Ableton scale (.ascl)</strong></p>
+    <p>Scale file for Ableton Live 12</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('maxmsp')">
+    <p><strong>Max/MSP coll tuning (.txt)</strong></p>
+    <p>List of frequencies (Hz) in a text file to load into a Max/MSP coll object</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('puredata')">
+    <p><strong>PureData text tuning (.txt)</strong></p>
+    <p>List of frequencies (Hz) in a text file to load into a PureData text object</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="showKontaktExportModal = true">
+    <p><strong>Kontakt tuning script (.txt)</strong></p>
+    <p>
+      Tuning script for Native Instruments Kontakt. Some instrument libraries allow this custom
+      script
+    </p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('soniccouture')">
+    <p><strong>Soniccouture tuning file (.nka)</strong></p>
+    <p>For Soniccouture sample libraries</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('harmor')">
+    <p><strong>Harmor pitch map (.fnv)</strong></p>
+    <p>Envelope state file for the pitch envelope in Image-Line Harmor</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('sytrus')">
+    <p><strong>Sytrus pitch map (.fnv)</strong></p>
+    <p>Envelope state file for the pitch envelope in Image-Line Sytrus</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="showKorgExportModal = true">
+    <p><strong>Korg Sound Librarian scale (.mnlgtuns + others)</strong></p>
+    <p>Tuning formats for use with Monologue, Minilogue, Minilogue XD, and Prologue synthesizers</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('deflemask')">
+    <p><strong>Deflemask reference (.txt)</strong></p>
+    <p>List of 'fine tune' values for Deflemask</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="showReaperExportModal = true">
+    <p><strong>Reaper note name map (.txt)</strong></p>
+    <p>Displays custom note names on Reaper's piano roll</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="showMtsSysexExportModal = true">
+    <p><strong>MTS Sysex Bulk Tuning Dump (.syx)</strong></p>
+    <p>Binary data of a Bulk Tuning Dump SysEx message</p>
+  </a>
+  <a href="#" class="btn" @click.prevent="doExport('xendevs')">
+    <p><strong>SonicWeave Interchange (.swi)</strong></p>
+    <p>Simplified Scale Workshop 3 format</p>
+  </a>
+  <h3>Documentation</h3>
+  <p>
+    You can read about the new SonicWeave syntax
+    <a
+      href="https://github.com/xenharmonic-devs/sonic-weave?tab=readme-ov-file#sonic-weave"
+      target="_blank"
+      rel="noopener noreferrer"
+      >in the SonicWeave documentation</a
+    >.
+  </p>
+  <p>
+    Remember to check out the
+    <a
+      href="https://github.com/xenharmonic-devs/sonic-weave/tree/main/examples"
+      target="_blank"
+      rel="noopener noreferrer"
+      >examples</a
+    >
+    too.
+  </p>
+</template>
+
+<style scoped>
+.btn {
+  width: 100%;
+  display: block;
+  margin-bottom: 1rem;
+  margin-left: 0;
+}
+button.warning {
+  margin-bottom: 0.5em;
+}
+.btn.debug {
+  border: var(--color-dark-indicator) 1px dashed;
+}
+</style>

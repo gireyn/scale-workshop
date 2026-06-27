@@ -1,0 +1,64 @@
+import { ref, watch } from 'vue'
+import { defineStore } from 'pinia'
+import { KorgModels } from '@/exporters/korg'
+import type { LineFormat } from '@/exporters/base'
+
+/**
+ * Export settings store shared by all exporter modals and actions.
+ */
+export const useExportStore = defineStore('export', () => {
+  // Korg
+  const korgModel = ref<KorgModels>(KorgModels.MINILOGUE)
+  const useOctaveFormat = ref(false)
+
+  // MTS sysex
+  const presetIndex = ref(0)
+
+  watch(presetIndex, (newValue) => {
+    // Workaround: some input paths can feed non-integer values.
+    newValue = Number.parseInt(String(newValue), 10)
+    if (Number.isNaN(newValue)) {
+      presetIndex.value = 0
+      return
+    }
+    if (newValue < 0) {
+      presetIndex.value = 0
+    }
+    if (newValue > 127) {
+      presetIndex.value = 127
+    }
+  })
+
+  // Reaper
+  const format = ref<LineFormat>('label')
+  const basePeriod = ref(0)
+  const baseDegree = ref(0)
+  const centsRoot = ref(0)
+  const integratePeriod = ref(false)
+  const displayPeriod = ref(true)
+
+  // Scala .scl
+  const centsFractionDigits = ref(6)
+  const includeLabels = ref(false)
+  const commentLabels = ref(true)
+  const includeColors = ref(false)
+
+  const remapKontaktSamples = ref(true)
+
+  return {
+    korgModel,
+    useOctaveFormat,
+    presetIndex,
+    format,
+    basePeriod,
+    baseDegree,
+    centsRoot,
+    integratePeriod,
+    displayPeriod,
+    centsFractionDigits,
+    includeLabels,
+    commentLabels,
+    includeColors,
+    remapKontaktSamples
+  }
+})

@@ -1,0 +1,134 @@
+import HE_DATA_URL from '@/assets/harmonic-entropy.ydata.raw?url'
+import EntropyWorker from '@/harmonic-entropy-worker?worker'
+import { computed, ref, watch } from 'vue'
+import { debounce } from '@/utils'
+import { defineStore } from 'pinia'
+import { EntropyCalculator, type HarmonicEntropyOptions } from 'harmonic-entropy'
+
+// The app freezes if we try to recalculate entropy in the main thread.
+let worker: Worker | undefined
+// Debounce doesn't block workers so we need extra guards to hide changes that would be overwritten.
+let jobId = 0
+
+// Constant options for harmonic-entropy package
+const MIN_CENTS = 0
+const MAX_CENTS = 6000
+const RES = 0.5
+const SERIES = 'tenney'
+const NORMALIZE = true
+
+/**
+ * Harmonic-entropy cache and computation store backed by a worker.
+ */
+export const useHarmonicEntropyStore = defineStore('harmonic-entropy', () => {
+  if (worker === undefined) {
+    worker = new EntropyWorker()
+  }
+
+  const table = ref<[number, number][]>([])
+
+  // The fetched N is much larger, but we use a smaller value for the UI.
+  const N = ref(10000)
+  const a = ref(1)
+  const s = ref(0.01)
+  const isFetching = ref(false)
+
+  const minY = computed(() => Math.min(...table.value.map((xy) => xy[1])))
+  const maxY = computed(() => Math.max(...table.value.map((xy) => xy[1])))
+  let fallbackEntropy: EntropyCalculator | undefined
+  let fallbackMinY = 0
+  let fallbackMaxY = 1
+
+  function tableFromY(tableY: number[]) {
+    const numEntries = Math.floor(MAX_CENTS / RES) + 1
+    return tableY.slice(0, numEntries).map((y, i) => [i * RES, y] as [number, number])
+  }
+
+  async function fetchTable(force = false) {
+    if (table.value.length && !force) {
+      return
+    }
+    isFetching.value = true
+    try {
+      const response = await fetch(HE_DATA_URL)
+      const buffer = await response.arrayBuffer()
+      const tableY = Array.from(new Float32Array(buffer))
+      table.value = tableFromY(tableY)
+    } finally {
+      isFetching.value = false
+    }
+  }
+
+  worker.onmessage = (e) => {
+    if (e.data.jobId === jobId) {
+      table.value = tableFromY(e.data.json.tableY)
+    }
+  }
+
+  // Pinia fails to serialize EntropyCalculator so we recreate its functionality here.
+  function entropyPercentage(cents: number) {
+    if (!table.value.length) {
+      if (!isFetching.value) {
+        void fetchTable()
+      }
+      if (fallbackEntropy === undefined) {
+        fallbackEntropy = new EntropyCalculator(options.value)
+        fallbackMinY = Math.min(...fallbackEntropy.table.map((xy) => xy[1]))
+        fallbackMaxY = Math.max(...fallbackEntropy.table.map((xy) => xy[1]))
+      }
+      cents = Math.min(MAX_CENTS, Math.abs(cents))
+      const y = fallbackEntropy.ofCents(cents)
+      return (y - fallbackMinY) / (fallbackMaxY - fallbackMinY)
+    }
+    cents = Math.abs(cents)
+    if (cents >= MAX_CENTS) {
+      return (table.value[table.value.length - 1][1] - minY.value) / (maxY.value - minY.value)
+    }
+
+    let mu = cents / RES
+    const index = Math.floor(mu)
+    mu -= index
+
+    const y = table.value[index][1] * (1 - mu) + table.value[index + 1][1] * mu
+    return (y - minY.value) / (maxY.value - minY.value)
+  }
+
+  watch(
+    N,
+    debounce((newValue: number) => {
+      const opts = { ...options.value }
+      opts.N = newValue
+      worker!.postMessage({ options: opts, jobId: ++jobId })
+    })
+  )
+
+  watch(
+    a,
+    debounce((newValue: number) => {
+      const opts = { ...options.value }
+      opts.a = newValue
+      worker!.postMessage({ options: opts, jobId: ++jobId })
+    })
+  )
+
+  watch(
+    s,
+    debounce((newValue: number) => {
+      const opts = { ...options.value }
+      opts.s = newValue
+      worker!.postMessage({ options: opts, jobId: ++jobId })
+    })
+  )
+
+  const options = computed<HarmonicEntropyOptions>(() => ({
+    N: N.value,
+    a: a.value,
+    s: s.value,
+    minCents: MIN_CENTS,
+    maxCents: MAX_CENTS,
+    res: RES,
+    series: SERIES,
+    normalize: NORMALIZE
+  }))
+  return { table, N, a, s, isFetching, minY, maxY, options, fetchTable, entropyPercentage }
+})
